@@ -42,8 +42,8 @@ vae-gan-tfg/
 │       ├── 2_3_1_construc_reconstruc/
 │       │   └── 7_reconstruction_regularization.py
 │       │
-│       ├── 2_3_2_esp_lat/
-│       │   └── 8_esp_lat_norm_VAE.py
+│       ├── 2_3_2_lat_esp/
+│       │   └── 8_lat_esp_norm_VAE.py
 │       │
 │       └── 2_3_3_b-VAE/
 │           └── 9_overfitting_bvae_mse_kl_relu_tanh.py
