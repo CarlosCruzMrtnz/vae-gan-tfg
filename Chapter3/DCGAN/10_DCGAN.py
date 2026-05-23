@@ -22,7 +22,7 @@ ADAM_BETA_1 = 0.5
 ADAM_BETA_2 = 0.999
 LEARNING_RATE = 0.0002
 NOISE_PARAM = 0.1
-
+ 
 # -----------------------------
 (x_train, y_train), (x_test, y_test) = datasets.fashion_mnist.load_data() # Dataset Fashion-MNIST
 
