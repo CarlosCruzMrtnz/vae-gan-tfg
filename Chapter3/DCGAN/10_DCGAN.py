@@ -6,354 +6,245 @@ from tensorflow.keras import (
     models,
     callbacks,
     losses,
-    utils,
     metrics,
     optimizers,
+    datasets,
 )
 
-IMAGE_SIZE = 64
+IMAGE_SIZE = 28
 CHANNELS = 1
 BATCH_SIZE = 128
 Z_DIM = 100
-EPOCHS = 300
+EPOCHS = 250
 LOAD_MODEL = False
+
 ADAM_BETA_1 = 0.5
 ADAM_BETA_2 = 0.999
 LEARNING_RATE = 0.0002
 NOISE_PARAM = 0.1
 
+# -----------------------------
+(x_train, y_train), (x_test, y_test) = datasets.fashion_mnist.load_data() # Dataset Fashion-MNIST
+
+x_train = x_train.astype("float32")
+x_test = x_test.astype("float32")
+
+# normalización a [-1, 1]
+x_train = (x_train - 127.5) / 127.5
+x_test = (x_test - 127.5) / 127.5
+
+# añadir canal
+x_train = np.expand_dims(x_train, axis=-1)
+x_test = np.expand_dims(x_test, axis=-1)
+
+train = tf.data.Dataset.from_tensor_slices(x_train)
+train = train.shuffle(60000).batch(BATCH_SIZE, drop_remainder=True).prefetch(2)
+
 def sample_batch(dataset):
-    batch = dataset.take(1).get_single_element()
-    if isinstance(batch, tuple):
-        batch = batch[0]
-    return batch.numpy()
+    return next(iter(dataset)).numpy()
 
 
-def display(
-    images, n=10, size=(20, 3), cmap="gray_r", as_type="float32", save_to=None
-):
-    """
-    Displays n random images from each one of the supplied arrays.
-    """
-    if images.max() > 1.0:
-        images = images / 255.0
-    elif images.min() < 0.0:
-        images = (images + 1.0) / 2.0
+def display(images, n=10, size=(20, 3), cmap="gray_r"):
+    images = (images + 1) / 2  # [-1,1] → [0,1]
 
     plt.figure(figsize=size)
     for i in range(n):
-        _ = plt.subplot(1, n, i + 1)
-        plt.imshow(images[i].astype(as_type), cmap=cmap)
+        plt.subplot(1, n, i + 1)
+        plt.imshow(images[i].squeeze(), cmap=cmap)
         plt.axis("off")
+    plt.show(block=False)
 
-    if save_to:
-        plt.savefig(save_to)
-        print(f"\nSaved to {save_to}")
-
-    plt.show()
-
-train_data = utils.image_dataset_from_directory(
-    "/app/data/lego-brick-images/dataset/",
-    labels=None,
-    color_mode="grayscale",
-    image_size=(IMAGE_SIZE, IMAGE_SIZE),
-    batch_size=BATCH_SIZE,
-    shuffle=True,
-    seed=42,
-    interpolation="bilinear",
-)
-
-def preprocess(img):
-    """
-    Normalize and reshape the images
-    """
-    img = (tf.cast(img, "float32") - 127.5) / 127.5
-    return img
-
-
-train = train_data.map(lambda x: preprocess(x))
 
 train_sample = sample_batch(train)
-display(train_sample)
 
-discriminator_input = layers.Input(shape=(IMAGE_SIZE, IMAGE_SIZE, CHANNELS))
-x = layers.Conv2D(64, kernel_size=4, strides=2, padding="same", use_bias=False)(
-    discriminator_input
-)
+# =============================
+# DISCRIMINATOR
+# =============================
+discriminator_input = layers.Input(shape=(28, 28, 1))
+
+x = layers.Conv2D(32, 4, strides=2, padding="same", use_bias=False)(discriminator_input)
 x = layers.LeakyReLU(0.2)(x)
 x = layers.Dropout(0.3)(x)
-x = layers.Conv2D(
-    128, kernel_size=4, strides=2, padding="same", use_bias=False
-)(x)
-x = layers.BatchNormalization(momentum=0.9)(x)
+
+x = layers.Conv2D(64, 4, strides=2, padding="same", use_bias=False)(x)
+x = layers.BatchNormalization()(x)
 x = layers.LeakyReLU(0.2)(x)
 x = layers.Dropout(0.3)(x)
-x = layers.Conv2D(
-    256, kernel_size=4, strides=2, padding="same", use_bias=False
-)(x)
-x = layers.BatchNormalization(momentum=0.9)(x)
+
+x = layers.Conv2D(128, 3, strides=2, padding="same", use_bias=False)(x)
+x = layers.BatchNormalization()(x)
 x = layers.LeakyReLU(0.2)(x)
-x = layers.Dropout(0.3)(x)
-x = layers.Conv2D(
-    512, kernel_size=4, strides=2, padding="same", use_bias=False
-)(x)
-x = layers.BatchNormalization(momentum=0.9)(x)
-x = layers.LeakyReLU(0.2)(x)
-x = layers.Dropout(0.3)(x)
-x = layers.Conv2D(
-    1,
-    kernel_size=4,
-    strides=1,
-    padding="valid",
-    use_bias=False,
-    activation="sigmoid",
-)(x)
-discriminator_output = layers.Flatten()(x)
+
+x = layers.Flatten()(x)
+discriminator_output = layers.Dense(1, activation="sigmoid")(x)
 
 discriminator = models.Model(discriminator_input, discriminator_output)
 discriminator.summary()
 
+# =============================
+# GENERATOR
+# =============================
 generator_input = layers.Input(shape=(Z_DIM,))
-x = layers.Reshape((1, 1, Z_DIM))(generator_input)
-x = layers.Conv2DTranspose(
-    512, kernel_size=4, strides=1, padding="valid", use_bias=False
-)(x)
-x = layers.BatchNormalization(momentum=0.9)(x)
+
+x = layers.Dense(7 * 7 * 128, use_bias=False)(generator_input)
+x = layers.BatchNormalization()(x)
 x = layers.LeakyReLU(0.2)(x)
-x = layers.Conv2DTranspose(
-    256, kernel_size=4, strides=2, padding="same", use_bias=False
-)(x)
-x = layers.BatchNormalization(momentum=0.9)(x)
+
+x = layers.Reshape((7, 7, 128))(x)
+
+x = layers.Conv2DTranspose(64, 4, strides=2, padding="same", use_bias=False)(x)
+x = layers.BatchNormalization()(x)
 x = layers.LeakyReLU(0.2)(x)
-x = layers.Conv2DTranspose(
-    128, kernel_size=4, strides=2, padding="same", use_bias=False
-)(x)
-x = layers.BatchNormalization(momentum=0.9)(x)
+
+x = layers.Conv2DTranspose(32, 4, strides=2, padding="same", use_bias=False)(x)
+x = layers.BatchNormalization()(x)
 x = layers.LeakyReLU(0.2)(x)
-x = layers.Conv2DTranspose(
-    64, kernel_size=4, strides=2, padding="same", use_bias=False
-)(x)
-x = layers.BatchNormalization(momentum=0.9)(x)
-x = layers.LeakyReLU(0.2)(x)
+
 generator_output = layers.Conv2DTranspose(
-    CHANNELS,
-    kernel_size=4,
-    strides=2,
-    padding="same",
-    use_bias=False,
-    activation="tanh",
+    1, 3, activation="tanh", padding="same"
 )(x)
+
 generator = models.Model(generator_input, generator_output)
 generator.summary()
 
+# =============================
+# DCGAN
+# =============================
 class DCGAN(models.Model):
     def __init__(self, discriminator, generator, latent_dim):
-        super(DCGAN, self).__init__()
+        super().__init__()
         self.discriminator = discriminator
         self.generator = generator
         self.latent_dim = latent_dim
 
     def compile(self, d_optimizer, g_optimizer):
-        super(DCGAN, self).compile()
+        super().compile()
         self.loss_fn = losses.BinaryCrossentropy()
         self.d_optimizer = d_optimizer
         self.g_optimizer = g_optimizer
         self.d_loss_metric = metrics.Mean(name="d_loss")
-        self.d_real_acc_metric = metrics.BinaryAccuracy(name="d_real_acc")
-        self.d_fake_acc_metric = metrics.BinaryAccuracy(name="d_fake_acc")
-        self.d_acc_metric = metrics.BinaryAccuracy(name="d_acc")
         self.g_loss_metric = metrics.Mean(name="g_loss")
-        self.g_acc_metric = metrics.BinaryAccuracy(name="g_acc")
 
     @property
     def metrics(self):
-        return [
-            self.d_loss_metric,
-            self.d_real_acc_metric,
-            self.d_fake_acc_metric,
-            self.d_acc_metric,
-            self.g_loss_metric,
-            self.g_acc_metric,
-        ]
+        return [self.d_loss_metric, self.g_loss_metric]
 
     def train_step(self, real_images):
-        # Sample random points in the latent space
         batch_size = tf.shape(real_images)[0]
-        random_latent_vectors = tf.random.normal(
-            shape=(batch_size, self.latent_dim)
-        )
+        random_latent = tf.random.normal((batch_size, self.latent_dim))
 
-        # Train the discriminator on fake images
         with tf.GradientTape() as gen_tape, tf.GradientTape() as disc_tape:
-            generated_images = self.generator(
-                random_latent_vectors, training=True
-            )
-            real_predictions = self.discriminator(real_images, training=True)
-            fake_predictions = self.discriminator(
-                generated_images, training=True
-            )
+            fake_images = self.generator(random_latent, training=True)
 
-            real_labels = tf.ones_like(real_predictions)
-            real_noisy_labels = real_labels + NOISE_PARAM * tf.random.uniform(
-                tf.shape(real_predictions)
-            )
-            fake_labels = tf.zeros_like(fake_predictions)
-            fake_noisy_labels = fake_labels - NOISE_PARAM * tf.random.uniform(
-                tf.shape(fake_predictions)
-            )
+            real_out = self.discriminator(real_images, training=True)
+            fake_out = self.discriminator(fake_images, training=True)
 
-            d_real_loss = self.loss_fn(real_noisy_labels, real_predictions)
-            d_fake_loss = self.loss_fn(fake_noisy_labels, fake_predictions)
-            d_loss = (d_real_loss + d_fake_loss) / 2.0
+            real_labels = tf.ones_like(real_out)
+            fake_labels = tf.zeros_like(fake_out)
 
-            g_loss = self.loss_fn(real_labels, fake_predictions)
+            d_loss_real = self.loss_fn(real_labels, real_out)
+            d_loss_fake = self.loss_fn(fake_labels, fake_out)
+            d_loss = (d_loss_real + d_loss_fake) / 2
 
-        gradients_of_discriminator = disc_tape.gradient(
-            d_loss, self.discriminator.trainable_variables
-        )
-        gradients_of_generator = gen_tape.gradient(
-            g_loss, self.generator.trainable_variables
-        )
+            g_loss = self.loss_fn(tf.ones_like(fake_out), fake_out)
+
+        grads_d = disc_tape.gradient(d_loss, self.discriminator.trainable_variables)
+        grads_g = gen_tape.gradient(g_loss, self.generator.trainable_variables)
 
         self.d_optimizer.apply_gradients(
-            zip(gradients_of_discriminator, discriminator.trainable_variables)
+            zip(grads_d, self.discriminator.trainable_variables)
         )
         self.g_optimizer.apply_gradients(
-            zip(gradients_of_generator, generator.trainable_variables)
+            zip(grads_g, self.generator.trainable_variables)
         )
 
-        # Update metrics
         self.d_loss_metric.update_state(d_loss)
-        self.d_real_acc_metric.update_state(real_labels, real_predictions)
-        self.d_fake_acc_metric.update_state(fake_labels, fake_predictions)
-        self.d_acc_metric.update_state(
-            [real_labels, fake_labels], [real_predictions, fake_predictions]
-        )
         self.g_loss_metric.update_state(g_loss)
-        self.g_acc_metric.update_state(real_labels, fake_predictions)
 
         return {m.name: m.result() for m in self.metrics}
 
-# ------------------------- DCGAN -------------------------
-dcgan = DCGAN(
-    discriminator=discriminator, generator=generator, latent_dim=Z_DIM
-)
-
-if LOAD_MODEL:
-    dcgan.load_weights("./checkpoint/checkpoint.ckpt")
+dcgan = DCGAN(discriminator, generator, Z_DIM)
 
 dcgan.compile(
-    d_optimizer=optimizers.Adam(
-        learning_rate=LEARNING_RATE, beta_1=ADAM_BETA_1, beta_2=ADAM_BETA_2
-    ),
-    g_optimizer=optimizers.Adam(
-        learning_rate=LEARNING_RATE, beta_1=ADAM_BETA_1, beta_2=ADAM_BETA_2
-    ),
+    d_optimizer=optimizers.Adam(LEARNING_RATE, beta_1=ADAM_BETA_1),
+    g_optimizer=optimizers.Adam(LEARNING_RATE, beta_1=ADAM_BETA_1),
 )
 
-# Create a model save checkpoint
-model_checkpoint_callback = callbacks.ModelCheckpoint(
-    filepath="./checkpoint/checkpoint.ckpt",
-    save_weights_only=True,
-    save_freq="epoch",
-    verbose=0,
-)
-
-tensorboard_callback = callbacks.TensorBoard(log_dir="./logs")
-
-
+# =============================
+# Callback 
+# =============================
 class ImageGenerator(callbacks.Callback):
-    def __init__(self, num_img, latent_dim):
+    def __init__(self, num_img=10, latent_dim=Z_DIM):
         self.num_img = num_img
         self.latent_dim = latent_dim
 
     def on_epoch_end(self, epoch, logs=None):
-        random_latent_vectors = tf.random.normal(
-            shape=(self.num_img, self.latent_dim)
-        )
-        generated_images = self.model.generator(random_latent_vectors)
-        generated_images = generated_images * 127.5 + 127.5
-        generated_images = generated_images.numpy()
-        display(
-            generated_images,
-            save_to="./output/generated_img_%03d.png" % (epoch),
-        )
+        z = tf.random.normal((self.num_img, self.latent_dim))
+        imgs = self.model.generator(z)
+        display(imgs.numpy(), n=self.num_img)
 
+# =============================
+# Training
+# =============================
 dcgan.fit(
     train,
     epochs=EPOCHS,
-    callbacks=[
-        model_checkpoint_callback,
-        tensorboard_callback,
-        ImageGenerator(num_img=10, latent_dim=Z_DIM),
-    ],
+    callbacks=[ImageGenerator()]
 )
 
-# -------------------------
-# Saving models
-# -------------------------
-generator.save("./models/generator")
-discriminator.save("./models/discriminator")
+# =============================
+grid_w, grid_h = (10, 3)
+z = np.random.normal(size=(grid_w * grid_h, Z_DIM))
 
-# -------------------------
-grid_width, grid_height = (10, 3)
-z_sample = np.random.normal(size=(grid_width * grid_height, Z_DIM))
+gen_imgs = generator.predict(z)
 
-# -------------------------
-reconstructions = generator.predict(z_sample)
+plt.figure(figsize=(18, 5))
+for i in range(grid_w * grid_h):
+    plt.subplot(grid_h, grid_w, i + 1)
+    plt.imshow(gen_imgs[i].squeeze(), cmap="gray_r")
+    plt.axis("off")
 
-# Draw a plot of decoded images
-fig = plt.figure(figsize=(18, 5))
-fig.subplots_adjust(hspace=0.4, wspace=0.4)
+plt.show(block=False)
 
-# Output the grid of faces
-for i in range(grid_width * grid_height):
-    ax = fig.add_subplot(grid_height, grid_width, i + 1)
-    ax.axis("off")
-    ax.imshow(reconstructions[i, :, :], cmap="Greys")
-
+# =============================
 def compare_images(img1, img2):
     return np.mean(np.abs(img1 - img2))
 
-all_data = []
-for i in train.as_numpy_iterator():
-    all_data.extend(i)
-all_data = np.array(all_data)
+
+all_data = x_train
 
 r, c = 3, 5
+gen = generator.predict(np.random.normal(size=(r * c, Z_DIM)))
+
 fig, axs = plt.subplots(r, c, figsize=(10, 6))
-fig.suptitle("Generated images", fontsize=20)
-
-noise = np.random.normal(size=(r * c, Z_DIM))
-gen_imgs = generator.predict(noise)
-
 cnt = 0
+
 for i in range(r):
     for j in range(c):
-        axs[i, j].imshow(gen_imgs[cnt], cmap="gray_r")
+        axs[i, j].imshow(gen[cnt].squeeze(), cmap="gray_r")
         axs[i, j].axis("off")
         cnt += 1
 
-plt.show()
+plt.suptitle("Generated images")
+plt.show(block=False)
 
 fig, axs = plt.subplots(r, c, figsize=(10, 6))
-fig.suptitle("Closest images in the training set", fontsize=20)
-
 cnt = 0
+
 for i in range(r):
     for j in range(c):
-        c_diff = 99999
-        c_img = None
-        for k_idx, k in enumerate(all_data):
-            diff = compare_images(gen_imgs[cnt], k)
-            if diff < c_diff:
-                c_img = np.copy(k)
-                c_diff = diff
-        axs[i, j].imshow(c_img, cmap="gray_r")
+        best = None
+        best_d = 1e9
+
+        for k in all_data:
+            d = compare_images(gen[cnt], k)
+            if d < best_d:
+                best_d = d
+                best = k
+
+        axs[i, j].imshow(best.squeeze(), cmap="gray_r")
         axs[i, j].axis("off")
         cnt += 1
 
-plt.show()
-
-
-
+plt.suptitle("Closest images in dataset")
+plt.show(block=True)
